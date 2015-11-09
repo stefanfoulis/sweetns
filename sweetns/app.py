@@ -1,24 +1,58 @@
 # -*- coding: utf-8 -*-
-# run with twistd -ny app.py
-from twisted.names import dns, server, client, cache
+from __future__ import absolute_import
+from twisted.internet import reactor
+from twisted.names import dns, server, cache
 from twisted.application import service, internet
-import txredisapi
-from .redis import RedisResolverBackend
+import urlparse
+from . import backends
+from .log import log
 
 
-def create_application():
-    rd = txredisapi.lazyConnectionPool(host="127.0.0.1", port=36379, dbid=0, password=None)
-    redisBackend = RedisResolverBackend(rd, servers=[('8.8.8.8', 53)])
+def create_factory(db, servers=None):
+    log.msg('creating factory...')
+    db_url = urlparse.urlparse(db)
+    servers = servers or ['dns://8.8.8.8:53', 'dns://8.8.4.4:53']
+    if db_url.scheme == 'redis':
+        backend = backends.RedisResolverBackend(
+            db=db,
+            servers=servers,
+        )
+    else:
+        raise RuntimeError('invalid db backend "{}" in {}'.format(
+            db_url.scheme,
+            db,
+        ))
+    factory = server.DNSServerFactory(
+        caches=[
+            cache.CacheResolver(),
+        ],
+        clients=[
+            backend,
+        ],
+    )
+    print 'create factory: ', factory
+    return factory
 
-    application = service.Application("txdnsredis")
-    srv_collection = service.IServiceCollection(application)
 
-    dnsFactory = server.DNSServerFactory(caches=[cache.CacheResolver()], clients=[redisBackend])
+def create_application(db, ip, port, name):
+    log.msg('creating app...')
+    port = int(port)
+    app = service.Application(name)
+    factory = create_factory(db=db)
+    serviceCollection = service.IServiceCollection(app)
+    internet\
+        .TCPServer(port, factory)\
+        .setServiceParent(serviceCollection)
+    internet\
+        .UDPServer(port, dns.DNSDatagramProtocol(factory))\
+        .setServiceParent(serviceCollection)
+    return app
 
-    internet.TCPServer(53, dnsFactory).setServiceParent(srv_collection)
-    internet.UDPServer(53, dns.DNSDatagramProtocol(dnsFactory)).setServiceParent(srv_collection)
-    return application
 
-
-# .tac app
-application = create_application()
+def create_reactor(db, ip, port):
+    log.msg('creating reactor...')
+    port = int(port)
+    factory = create_factory(db=db)
+    reactor.listenTCP(port, factory)
+    reactor.listenUDP(port, dns.DNSDatagramProtocol(factory))
+    return reactor

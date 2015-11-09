@@ -1,0 +1,18 @@
+sweetns:
+  build: .
+  command: sweetns
+  volumes:
+    - ".:/app"
+  ports:
+    - "953:53"
+  expose:
+    - "53"
+  links:
+    - "redis:redis"
+  environment:
+    SWEETNS_DB: "redis://$REDIS_PORT_6379_TCP_ADDR:$REDIS_PORT_6379_TCP_PORT/0"
+    SWEETNS_SERVER_1: "8.8.8.8"
+    SWEETNS_SERVER_2: "8.8.4.4"
+
+redis:
+  image: redis:3
